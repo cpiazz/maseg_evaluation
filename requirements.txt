@@ -1,0 +1,26 @@
+# Core numerical / data packages
+numpy<2
+pandas
+scipy
+scikit-image
+
+# Medical imaging
+pydicom
+SimpleITK
+
+# Image processing
+opencv-python-headless
+
+# Visualisation / review UI
+matplotlib
+streamlit
+
+# PyTorch versions used successfully with the maseg checkpoint
+torch==2.5.1
+torchvision==0.20.1
+
+# Lightning version observed in the working environment
+pytorch-lightning==2.6.6
+
+# Optional: only needed if using this environment from Spyder
+# spyder-kernels==3.0.*

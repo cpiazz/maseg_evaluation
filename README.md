@@ -25,7 +25,6 @@ A suggested repository structure is:
 maseg-evaluation/
 ├── main.py
 ├── config.example.json
-├── config.json                  # local only; do not commit
 ├── requirements.txt
 ├── README.md
 ├── .gitignore
@@ -34,12 +33,6 @@ maseg-evaluation/
 │   ├── __init__.py
 │   ├── run_maseg_batch.py
 │   └── review_maseg_streamlit.py
-│
-├── patches/
-│   └── maseg_readers.patch      # optional
-│
-├── docs/
-│   └── evaluation_notes.md
 │
 └── outputs/
     └── .gitkeep
