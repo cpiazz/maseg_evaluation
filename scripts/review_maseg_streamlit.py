@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+
 """
 Created on Tue Oct  6 12:58:54 2026
 
@@ -13,8 +14,17 @@ Interactive qualitative review interface for maseg outputs.
 This Streamlit application is designed to be launched from main.py.
 
 Configuration is passed from main.py through environment variables.
-The number of cases available for review is determined automatically
-from the segmentation files already present in OUTPUT_DIR.
+
+Supported datasets
+------------------
+- CBIS_DDSM
+- CMMD
+
+The number of cases available for review is determined from
+the segmentation files present in OUTPUT_DIR.
+
+Where possible, processing_log.csv is used to identify the exact
+original DICOM corresponding to each segmentation.
 
 The reviewer can:
 - inspect the original mammogram
@@ -23,6 +33,7 @@ The reviewer can:
 - provide qualitative visual feedback
 - save one evaluation per image into a CSV
 """
+
 
 # ============================================================
 # IMPORTS
@@ -50,9 +61,11 @@ st.set_page_config(
     layout="wide"
 )
 
+
 st.title(
     "maseg Breast / Background Segmentation Evaluation"
 )
+
 
 st.caption(
     "Qualitative visual evaluation of maseg breast and "
@@ -64,26 +77,38 @@ st.caption(
 # CONFIGURATION FROM main.py
 # ============================================================
 
+DATASET_NAME = os.environ.get(
+    "MASEG_DATASET_NAME",
+    ""
+).upper()
+
+
 DATA_ROOT = os.environ.get(
     "MASEG_DATA_ROOT"
 )
+
 
 OUTPUT_DIR = os.environ.get(
     "MASEG_OUTPUT_DIR"
 )
 
+
 METADATA_CSV = os.environ.get(
-    "MASEG_METADATA_CSV"
+    "MASEG_METADATA_CSV",
+    ""
 )
+
 
 EVALUATION_OUTPUT_DIR = os.environ.get(
     "MASEG_EVALUATION_OUTPUT_DIR"
 )
 
+
 EVALUATION_LABEL_DEFAULT = os.environ.get(
     "MASEG_EVALUATION_LABEL",
     "review_1"
 )
+
 
 MLO_ONLY = (
     os.environ.get(
@@ -99,12 +124,47 @@ MLO_ONLY = (
 # CHECK CONFIGURATION
 # ============================================================
 
+supported_datasets = [
+    "CBIS_DDSM",
+    "CMMD"
+]
+
+
+if DATASET_NAME not in supported_datasets:
+
+    st.error(
+        "Unsupported or missing DATASET_NAME."
+    )
+
+    st.code(
+        "Supported datasets: "
+        + ", ".join(
+            supported_datasets
+        )
+    )
+
+    st.stop()
+
+
 required_config = {
-    "DATA_ROOT": DATA_ROOT,
-    "OUTPUT_DIR": OUTPUT_DIR,
-    "METADATA_CSV": METADATA_CSV,
-    "EVALUATION_OUTPUT_DIR": EVALUATION_OUTPUT_DIR
+    "DATA_ROOT":
+        DATA_ROOT,
+
+    "OUTPUT_DIR":
+        OUTPUT_DIR,
+
+    "EVALUATION_OUTPUT_DIR":
+        EVALUATION_OUTPUT_DIR
 }
+
+
+# CBIS-DDSM additionally requires metadata
+if DATASET_NAME == "CBIS_DDSM":
+
+    required_config[
+        "METADATA_CSV"
+    ] = METADATA_CSV
+
 
 missing_config = [
     key
@@ -112,6 +172,7 @@ missing_config = [
     in required_config.items()
     if not value
 ]
+
 
 if missing_config:
 
@@ -122,10 +183,12 @@ if missing_config:
         )
     )
 
+
     st.error(
         "Start this application through main.py so that "
         "the configuration can be passed from config.json."
     )
+
 
     st.stop()
 
@@ -141,121 +204,21 @@ os.makedirs(
 
 
 # ============================================================
-# SIDEBAR - CONFIGURATION SUMMARY
-# ============================================================
-
-st.sidebar.header(
-    "Configuration"
-)
-
-st.sidebar.caption(
-    "CBIS-DDSM data root"
-)
-
-st.sidebar.code(
-    DATA_ROOT
-)
-
-st.sidebar.caption(
-    "maseg output directory"
-)
-
-st.sidebar.code(
-    OUTPUT_DIR
-)
-
-st.sidebar.caption(
-    "Metadata CSV"
-)
-
-st.sidebar.code(
-    METADATA_CSV
-)
-
-st.sidebar.caption(
-    "Evaluation output directory"
-)
-
-st.sidebar.code(
-    EVALUATION_OUTPUT_DIR
-)
-
-st.sidebar.caption(
-    "View filter"
-)
-
-if MLO_ONLY:
-
-    st.sidebar.code(
-        "MLO only"
-    )
-
-else:
-
-    st.sidebar.code(
-        "All available views"
-    )
-
-
-# ============================================================
-# EVALUATION LABEL
-# ============================================================
-
-st.sidebar.header(
-    "Evaluation"
-)
-
-evaluation_label = st.sidebar.text_input(
-    "Evaluation / reviewer label",
-    value=EVALUATION_LABEL_DEFAULT,
-    help=(
-        "Used to create the CSV filename. "
-        "Examples: Concetta, reviewer_A, test_run."
-    )
-)
-
-evaluation_label_safe = re.sub(
-    r"[^A-Za-z0-9_-]+",
-    "_",
-    evaluation_label.strip()
-)
-
-if not evaluation_label_safe:
-
-    evaluation_label_safe = (
-        "review_1"
-    )
-
-EVALUATION_CSV = os.path.join(
-    EVALUATION_OUTPUT_DIR,
-    (
-        "maseg_evaluation_"
-        f"{evaluation_label_safe}.csv"
-    )
-)
-
-st.sidebar.caption(
-    "Evaluation file:"
-)
-
-st.sidebar.code(
-    EVALUATION_CSV
-)
-
-
-# ============================================================
 # CHECK PATHS
 # ============================================================
 
 path_errors = []
+
 
 if not os.path.isdir(
     DATA_ROOT
 ):
 
     path_errors.append(
-        f"Data root does not exist:\n{DATA_ROOT}"
+        f"Data root does not exist:\n"
+        f"{DATA_ROOT}"
     )
+
 
 if not os.path.isdir(
     OUTPUT_DIR
@@ -266,14 +229,20 @@ if not os.path.isdir(
         f"{OUTPUT_DIR}"
     )
 
-if not os.path.isfile(
-    METADATA_CSV
+
+if (
+    DATASET_NAME == "CBIS_DDSM"
+    and
+    not os.path.isfile(
+        METADATA_CSV
+    )
 ):
 
     path_errors.append(
         f"Metadata CSV does not exist:\n"
         f"{METADATA_CSV}"
     )
+
 
 if len(
     path_errors
@@ -283,118 +252,169 @@ if len(
         "One or more configured paths are invalid."
     )
 
+
     for error in path_errors:
 
         st.code(
             error
         )
 
+
     st.stop()
 
 
 # ============================================================
-# HELPER FUNCTIONS
+# SIDEBAR - CONFIGURATION SUMMARY
 # ============================================================
 
-def get_image_key(
-    patient_id
-):
+st.sidebar.header(
+    "Configuration"
+)
 
-    """
-    Extract:
 
-        P_00038_LEFT_MLO
+st.sidebar.caption(
+    "Dataset"
+)
 
-    from PatientID strings such as:
 
-        P_00038_LEFT_MLO.dcm
+st.sidebar.code(
+    DATASET_NAME
+)
 
-    or:
 
-        Calc-Test_P_00038_LEFT_MLO_1
-    """
+st.sidebar.caption(
+    "Data root"
+)
 
-    match = re.search(
-        r"(P_\d+_(?:LEFT|RIGHT)_(?:CC|MLO))",
-        str(
-            patient_id
+
+st.sidebar.code(
+    DATA_ROOT
+)
+
+
+st.sidebar.caption(
+    "maseg output directory"
+)
+
+
+st.sidebar.code(
+    OUTPUT_DIR
+)
+
+
+# ------------------------------------------------------------
+# CBIS-DDSM-specific configuration
+# ------------------------------------------------------------
+
+if DATASET_NAME == "CBIS_DDSM":
+
+    st.sidebar.caption(
+        "Metadata CSV"
+    )
+
+
+    st.sidebar.code(
+        METADATA_CSV
+    )
+
+
+    st.sidebar.caption(
+        "View filter"
+    )
+
+
+    if MLO_ONLY:
+
+        st.sidebar.code(
+            "MLO only"
         )
-    )
 
-    if match:
+    else:
 
-        return match.group(
-            1
+        st.sidebar.code(
+            "All available views"
         )
 
-    return None
+
+st.sidebar.caption(
+    "Evaluation output directory"
+)
 
 
-def find_dicom_for_patient(
-    patient_id
-):
+st.sidebar.code(
+    EVALUATION_OUTPUT_DIR
+)
 
-    """
-    Find all DICOM files underneath a patient's
-    CBIS-DDSM directory.
-    """
 
-    patient_dir = os.path.join(
-        DATA_ROOT,
-        str(
-            patient_id
-        )
+# ============================================================
+# EVALUATION LABEL
+# ============================================================
+
+st.sidebar.header(
+    "Evaluation"
+)
+
+
+evaluation_label = st.sidebar.text_input(
+    "Evaluation / reviewer label",
+    value=EVALUATION_LABEL_DEFAULT,
+    help=(
+        "Used to create the CSV filename. "
+        "Examples: Concetta, reviewer_A, test_run."
+    )
+)
+
+
+evaluation_label_safe = re.sub(
+    r"[^A-Za-z0-9_-]+",
+    "_",
+    evaluation_label.strip()
+)
+
+
+if not evaluation_label_safe:
+
+    evaluation_label_safe = (
+        "review_1"
     )
 
-    if not os.path.exists(
-        patient_dir
-    ):
 
-        return []
-
-    files = glob.glob(
-        os.path.join(
-            patient_dir,
-            "**",
-            "*.dcm"
-        ),
-        recursive=True
+EVALUATION_CSV = os.path.join(
+    EVALUATION_OUTPUT_DIR,
+    (
+        "maseg_evaluation_"
+        f"{evaluation_label_safe}.csv"
     )
-
-    return sorted(
-        files
-    )
+)
 
 
-@st.cache_data
-def load_metadata(
-    metadata_csv
-):
+st.sidebar.caption(
+    "Evaluation file:"
+)
 
-    df = pd.read_csv(
-        metadata_csv
-    )
 
-    df["image_key"] = (
-        df[
-            "PatientID"
-        ]
-        .apply(
-            get_image_key
-        )
-    )
+st.sidebar.code(
+    EVALUATION_CSV
+)
 
-    return df
 
+# ============================================================
+# GENERIC HELPER FUNCTIONS
+# ============================================================
 
 @st.cache_data
 def load_original_image(
     image_path
 ):
 
+    """
+    Load and normalise the original DICOM mammogram.
+    """
+
     ds = pydicom.dcmread(
         image_path
     )
+
 
     image = (
         ds.pixel_array
@@ -403,11 +423,17 @@ def load_original_image(
         )
     )
 
+
     photometric = getattr(
         ds,
         "PhotometricInterpretation",
         ""
     )
+
+
+    # --------------------------------------------------------
+    # Invert MONOCHROME1
+    # --------------------------------------------------------
 
     if photometric == "MONOCHROME1":
 
@@ -417,15 +443,20 @@ def load_original_image(
             image
         )
 
+
+    # --------------------------------------------------------
+    # Normalise to [0, 1]
+    # --------------------------------------------------------
+
     image = (
         image
         -
         image.min()
     )
 
-    maximum = (
-        image.max()
-    )
+
+    maximum = image.max()
+
 
     if maximum > 0:
 
@@ -435,20 +466,33 @@ def load_original_image(
             maximum
         )
 
+
     return image
 
+
+# ============================================================
 
 @st.cache_data
 def load_segmentation(
     segmentation_path
 ):
 
+    """
+    Load saved maseg segmentation.
+    """
+
     return np.load(
         segmentation_path
     )
 
 
+# ============================================================
+
 def load_existing_evaluations():
+
+    """
+    Load previously saved qualitative evaluations.
+    """
 
     if os.path.exists(
         EVALUATION_CSV
@@ -464,176 +508,800 @@ def load_existing_evaluations():
 
             return pd.DataFrame()
 
+
     return pd.DataFrame()
 
 
 # ============================================================
-# LOAD METADATA
+# PROCESSING LOG
 # ============================================================
 
-df = load_metadata(
-    METADATA_CSV
-)
+@st.cache_data
+def load_processing_log(
+    output_dir
+):
 
+    """
+    Load processing_log.csv if available.
+    """
 
-# ============================================================
-# IDENTIFY FULL MAMMOGRAMS
-# ============================================================
-
-full_images = df[
-    df[
-        "SeriesDescription"
-    ]
-    .fillna("")
-    .str.lower()
-    .eq(
-        "full mammogram images"
-    )
-].copy()
-
-
-# ------------------------------------------------------------
-# Include original mammograms where SeriesDescription is blank
-# ------------------------------------------------------------
-
-original_pattern = (
-    r"^P_\d+_"
-    r"(LEFT|RIGHT)_"
-    r"(CC|MLO)"
-    r"(\.dcm)?$"
-)
-
-missing_description_originals = df[
-    df[
-        "SeriesDescription"
-    ].isna()
-    &
-    df[
-        "PatientID"
-    ].str.match(
-        original_pattern,
-        na=False
-    )
-].copy()
-
-full_images = pd.concat(
-    [
-        full_images,
-        missing_description_originals
-    ],
-    ignore_index=True
-)
-
-
-# ============================================================
-# FILTER BY VIEW
-# ============================================================
-
-if MLO_ONLY:
-
-    full_images = full_images[
-        full_images[
-            "image_key"
-        ]
-        .str.endswith(
-            "_MLO",
-            na=False
-        )
-    ].copy()
-
-
-# ============================================================
-# ONE ROW PER MAMMOGRAM
-# ============================================================
-
-full_images = (
-    full_images
-    .dropna(
-        subset=[
-            "image_key"
-        ]
-    )
-    .drop_duplicates(
-        subset=[
-            "image_key"
-        ]
-    )
-    .reset_index(
-        drop=True
-    )
-)
-
-
-# ============================================================
-# FIND CASES WITH SAVED MASEG SEGMENTATION
-# ============================================================
-#
-# No LIMIT is needed here.
-#
-# The number of cases available for review is determined by the
-# number of matching *_maseg.npy files already present in
-# OUTPUT_DIR.
-# ============================================================
-
-processed = []
-
-for _, row in full_images.iterrows():
-
-    image_key = (
-        row[
-            "image_key"
-        ]
+    processing_log = os.path.join(
+        output_dir,
+        "processing_log.csv"
     )
 
-    segmentation_path = os.path.join(
-        OUTPUT_DIR,
-        f"{image_key}_maseg.npy"
-    )
 
-    if os.path.exists(
-        segmentation_path
+    if not os.path.isfile(
+        processing_log
     ):
 
-        processed.append(
+        return pd.DataFrame()
+
+
+    try:
+
+        return pd.read_csv(
+            processing_log
+        )
+
+    except Exception:
+
+        return pd.DataFrame()
+
+
+# ============================================================
+# LOAD CASES FROM PROCESSING LOG
+# ============================================================
+
+def load_cases_from_processing_log():
+
+    """
+    Use processing_log.csv to identify processed cases.
+
+    This is the preferred approach because the processing
+    log stores the exact source DICOM path corresponding
+    to each segmentation.
+    """
+
+    log = load_processing_log(
+        OUTPUT_DIR
+    )
+
+
+    if len(
+        log
+    ) == 0:
+
+        return pd.DataFrame()
+
+
+    if "image_key" not in log.columns:
+
+        return pd.DataFrame()
+
+
+    records = []
+
+
+    for _, row in log.iterrows():
+
+        image_key = str(
+            row[
+                "image_key"
+            ]
+        )
+
+
+        # ----------------------------------------------------
+        # Patient ID
+        # ----------------------------------------------------
+
+        if (
+            "patient_id"
+            in row.index
+            and
+            pd.notna(
+                row[
+                    "patient_id"
+                ]
+            )
+        ):
+
+            patient_id = str(
+                row[
+                    "patient_id"
+                ]
+            )
+
+        elif (
+            "PatientID"
+            in row.index
+            and
+            pd.notna(
+                row[
+                    "PatientID"
+                ]
+            )
+        ):
+
+            patient_id = str(
+                row[
+                    "PatientID"
+                ]
+            )
+
+        else:
+
+            patient_id = ""
+
+
+        # ----------------------------------------------------
+        # Original DICOM path
+        # ----------------------------------------------------
+
+        image_path = ""
+
+
+        if (
+            "image_path"
+            in row.index
+            and
+            pd.notna(
+                row[
+                    "image_path"
+                ]
+            )
+        ):
+
+            image_path = str(
+                row[
+                    "image_path"
+                ]
+            )
+
+
+        # ----------------------------------------------------
+        # Segmentation path
+        # ----------------------------------------------------
+
+        segmentation_path = ""
+
+
+        if (
+            "segmentation_path"
+            in row.index
+            and
+            pd.notna(
+                row[
+                    "segmentation_path"
+                ]
+            )
+        ):
+
+            segmentation_path = str(
+                row[
+                    "segmentation_path"
+                ]
+            )
+
+
+        # ----------------------------------------------------
+        # Fall back to standard output filename
+        # ----------------------------------------------------
+
+        if (
+            not segmentation_path
+            or
+            not os.path.isfile(
+                segmentation_path
+            )
+        ):
+
+            expected_segmentation = os.path.join(
+                OUTPUT_DIR,
+                f"{image_key}_maseg.npy"
+            )
+
+
+            if os.path.isfile(
+                expected_segmentation
+            ):
+
+                segmentation_path = (
+                    expected_segmentation
+                )
+
+
+        # ----------------------------------------------------
+        # Keep only valid processed cases
+        # ----------------------------------------------------
+
+        if not os.path.isfile(
+            segmentation_path
+        ):
+
+            continue
+
+
+        if not image_path:
+
+            continue
+
+
+        if not os.path.isfile(
+            image_path
+        ):
+
+            continue
+
+
+        records.append(
             {
                 "image_key":
                     image_key,
 
                 "PatientID":
-                    row[
-                        "PatientID"
-                    ],
+                    patient_id,
+
+                "image_path":
+                    image_path,
 
                 "segmentation_path":
                     segmentation_path
             }
         )
 
-cases = pd.DataFrame(
-    processed
-)
+
+    cases = pd.DataFrame(
+        records
+    )
+
+
+    if len(
+        cases
+    ) > 0:
+
+        cases = (
+            cases
+            .drop_duplicates(
+                subset=[
+                    "image_key"
+                ],
+                keep="last"
+            )
+            .reset_index(
+                drop=True
+            )
+        )
+
+
+    return cases
+
+
+# ============================================================
+# CBIS-DDSM FALLBACK FUNCTIONS
+# ============================================================
+
+def get_cbis_image_key(
+    patient_id
+):
+
+    """
+    Extract:
+
+        P_00038_LEFT_MLO
+
+    from CBIS-DDSM PatientID strings.
+    """
+
+    match = re.search(
+        r"(P_\d+_(?:LEFT|RIGHT)_(?:CC|MLO))",
+        str(
+            patient_id
+        )
+    )
+
+
+    if match:
+
+        return match.group(
+            1
+        )
+
+
+    return None
+
+
+# ============================================================
+
+def find_cbis_dicom(
+    patient_id
+):
+
+    """
+    Find DICOM files underneath a CBIS-DDSM
+    patient directory.
+    """
+
+    patient_dir = os.path.join(
+        DATA_ROOT,
+        str(
+            patient_id
+        )
+    )
+
+
+    if not os.path.exists(
+        patient_dir
+    ):
+
+        return []
+
+
+    files = glob.glob(
+        os.path.join(
+            patient_dir,
+            "**",
+            "*.dcm"
+        ),
+        recursive=True
+    )
+
+
+    return sorted(
+        files
+    )
+
+
+# ============================================================
+
+@st.cache_data
+def load_cbis_metadata(
+    metadata_csv
+):
+
+    """
+    Load CBIS-DDSM metadata.
+    """
+
+    df = pd.read_csv(
+        metadata_csv
+    )
+
+
+    df[
+        "image_key"
+    ] = (
+        df[
+            "PatientID"
+        ]
+        .apply(
+            get_cbis_image_key
+        )
+    )
+
+
+    return df
+
+
+# ============================================================
+
+def load_cbis_fallback_cases():
+
+    """
+    Reconstruct review cases from CBIS-DDSM metadata.
+
+    This is used as a fallback when processing_log.csv
+    does not contain all currently available outputs.
+    """
+
+    df = load_cbis_metadata(
+        METADATA_CSV
+    )
+
+
+    # --------------------------------------------------------
+    # Full mammograms
+    # --------------------------------------------------------
+
+    full_images = df[
+        df[
+            "SeriesDescription"
+        ]
+        .fillna("")
+        .str.lower()
+        .eq(
+            "full mammogram images"
+        )
+    ].copy()
+
+
+    # --------------------------------------------------------
+    # Include originals with blank SeriesDescription
+    # --------------------------------------------------------
+
+    original_pattern = (
+        r"^P_\d+_"
+        r"(LEFT|RIGHT)_"
+        r"(CC|MLO)"
+        r"(\.dcm)?$"
+    )
+
+
+    missing_description_originals = df[
+        df[
+            "SeriesDescription"
+        ].isna()
+        &
+        df[
+            "PatientID"
+        ].str.match(
+            original_pattern,
+            na=False
+        )
+    ].copy()
+
+
+    full_images = pd.concat(
+        [
+            full_images,
+            missing_description_originals
+        ],
+        ignore_index=True
+    )
+
+
+    # --------------------------------------------------------
+    # MLO filtering
+    # --------------------------------------------------------
+
+    if MLO_ONLY:
+
+        full_images = full_images[
+            full_images[
+                "image_key"
+            ]
+            .str.endswith(
+                "_MLO",
+                na=False
+            )
+        ].copy()
+
+
+    # --------------------------------------------------------
+    # One row per image
+    # --------------------------------------------------------
+
+    full_images = (
+        full_images
+        .dropna(
+            subset=[
+                "image_key"
+            ]
+        )
+        .drop_duplicates(
+            subset=[
+                "image_key"
+            ]
+        )
+        .reset_index(
+            drop=True
+        )
+    )
+
+
+    records = []
+
+
+    for _, row in full_images.iterrows():
+
+        image_key = row[
+            "image_key"
+        ]
+
+
+        patient_id = row[
+            "PatientID"
+        ]
+
+
+        segmentation_path = os.path.join(
+            OUTPUT_DIR,
+            f"{image_key}_maseg.npy"
+        )
+
+
+        if not os.path.isfile(
+            segmentation_path
+        ):
+
+            continue
+
+
+        dicom_files = find_cbis_dicom(
+            patient_id
+        )
+
+
+        if len(
+            dicom_files
+        ) == 0:
+
+            continue
+
+
+        image_path = (
+            dicom_files[0]
+        )
+
+
+        records.append(
+            {
+                "image_key":
+                    image_key,
+
+                "PatientID":
+                    patient_id,
+
+                "image_path":
+                    image_path,
+
+                "segmentation_path":
+                    segmentation_path
+            }
+        )
+
+
+    return pd.DataFrame(
+        records
+    )
+
+
+# ============================================================
+# CMMD FALLBACK CASE LOADER
+# ============================================================
+
+def load_cmmd_fallback_cases():
+
+    """
+    Reconstruct CMMD review cases directly from the
+    source DICOM hierarchy.
+
+    The enumeration mirrors run_maseg_batch.py:
+
+        D1-0001_01
+        D1-0001_02
+        ...
+
+    Every DICOM is treated as one independent image.
+    """
+
+    records = []
+
+
+    patient_dirs = sorted(
+        [
+            path
+            for path in glob.glob(
+                os.path.join(
+                    DATA_ROOT,
+                    "*"
+                )
+            )
+            if os.path.isdir(
+                path
+            )
+        ]
+    )
+
+
+    for patient_dir in patient_dirs:
+
+        patient_id = os.path.basename(
+            patient_dir
+        )
+
+
+        dicom_files = sorted(
+            glob.glob(
+                os.path.join(
+                    patient_dir,
+                    "**",
+                    "*.dcm"
+                ),
+                recursive=True
+            )
+        )
+
+
+        for image_index, image_path in enumerate(
+            dicom_files,
+            start=1
+        ):
+
+            image_key = (
+                f"{patient_id}_"
+                f"{image_index:02d}"
+            )
+
+
+            segmentation_path = os.path.join(
+                OUTPUT_DIR,
+                f"{image_key}_maseg.npy"
+            )
+
+
+            if not os.path.isfile(
+                segmentation_path
+            ):
+
+                continue
+
+
+            records.append(
+                {
+                    "image_key":
+                        image_key,
+
+                    "PatientID":
+                        patient_id,
+
+                    "image_path":
+                        image_path,
+
+                    "segmentation_path":
+                        segmentation_path
+                }
+            )
+
+
+    return pd.DataFrame(
+        records
+    )
+
+
+# ============================================================
+# LOAD REVIEW CASES
+# ============================================================
+
+def load_review_cases():
+
+    """
+    Build the list of processed cases available for review.
+
+    processing_log.csv is preferred because it contains the
+    exact DICOM path used during batch inference.
+
+    Dataset-specific discovery is used as a fallback and also
+    allows outputs from earlier runs to be included.
+    """
+
+    # --------------------------------------------------------
+    # Cases identified through processing_log.csv
+    # --------------------------------------------------------
+
+    log_cases = (
+        load_cases_from_processing_log()
+    )
+
+
+    # --------------------------------------------------------
+    # Dataset-specific fallback
+    # --------------------------------------------------------
+
+    if DATASET_NAME == "CBIS_DDSM":
+
+        fallback_cases = (
+            load_cbis_fallback_cases()
+        )
+
+
+    elif DATASET_NAME == "CMMD":
+
+        fallback_cases = (
+            load_cmmd_fallback_cases()
+        )
+
+
+    else:
+
+        fallback_cases = pd.DataFrame()
+
+
+    # --------------------------------------------------------
+    # Combine
+    # --------------------------------------------------------
+
+    case_tables = []
+
+
+    if len(
+        fallback_cases
+    ) > 0:
+
+        case_tables.append(
+            fallback_cases
+        )
+
+
+    if len(
+        log_cases
+    ) > 0:
+
+        # processing log goes last so it takes precedence
+        case_tables.append(
+            log_cases
+        )
+
+
+    if len(
+        case_tables
+    ) == 0:
+
+        return pd.DataFrame(
+            columns=[
+                "image_key",
+                "PatientID",
+                "image_path",
+                "segmentation_path"
+            ]
+        )
+
+
+    cases = pd.concat(
+        case_tables,
+        ignore_index=True
+    )
+
+
+    cases = (
+        cases
+        .drop_duplicates(
+            subset=[
+                "image_key"
+            ],
+            keep="last"
+        )
+        .sort_values(
+            "image_key"
+        )
+        .reset_index(
+            drop=True
+        )
+    )
+
+
+    return cases
+
+
+# ============================================================
+# LOAD CASES
+# ============================================================
+
+cases = load_review_cases()
+
 
 if len(
     cases
 ) == 0:
 
-    if MLO_ONLY:
-
-        message = (
-            "No processed maseg .npy files were found "
-            "for the MLO mammograms."
-        )
-
-    else:
-
-        message = (
-            "No processed maseg .npy files were found "
-            "for the available mammograms."
-        )
-
     st.error(
-        message
+        "No processed maseg segmentation files "
+        "were found for this dataset."
     )
+
+
+    st.write(
+        "Dataset:",
+        DATASET_NAME
+    )
+
+
+    st.write(
+        "Output directory:",
+        OUTPUT_DIR
+    )
+
 
     st.stop()
 
@@ -646,7 +1314,13 @@ evaluations = (
     load_existing_evaluations()
 )
 
+
+# ============================================================
+# IDENTIFY REVIEWS FOR CURRENT DATASET
+# ============================================================
+
 evaluated_keys = set()
+
 
 if (
     len(
@@ -657,8 +1331,34 @@ if (
     in evaluations.columns
 ):
 
+    current_evaluations = (
+        evaluations
+    )
+
+
+    # --------------------------------------------------------
+    # If dataset information exists, restrict progress
+    # statistics to the current dataset.
+    # --------------------------------------------------------
+
+    if (
+        "dataset"
+        in evaluations.columns
+    ):
+
+        current_evaluations = (
+            evaluations[
+                evaluations[
+                    "dataset"
+                ]
+                ==
+                DATASET_NAME
+            ]
+        )
+
+
     evaluated_keys = set(
-        evaluations[
+        current_evaluations[
             "image_key"
         ]
         .dropna()
@@ -673,9 +1373,11 @@ st.sidebar.header(
     "Review progress"
 )
 
+
 n_processed = len(
     cases
 )
+
 
 n_reviewed = len(
     set(
@@ -687,26 +1389,31 @@ n_reviewed = len(
     evaluated_keys
 )
 
+
 n_remaining = (
     n_processed
     -
     n_reviewed
 )
 
+
 st.sidebar.metric(
     "Processed",
     n_processed
 )
+
 
 st.sidebar.metric(
     "Reviewed",
     n_reviewed
 )
 
+
 st.sidebar.metric(
     "Remaining",
     n_remaining
 )
+
 
 if n_processed > 0:
 
@@ -728,6 +1435,7 @@ show_only_unreviewed = (
     )
 )
 
+
 if show_only_unreviewed:
 
     cases_display = (
@@ -744,6 +1452,7 @@ if show_only_unreviewed:
         )
     )
 
+
 else:
 
     cases_display = (
@@ -753,6 +1462,7 @@ else:
         )
     )
 
+
 if len(
     cases_display
 ) == 0:
@@ -760,6 +1470,7 @@ if len(
     st.success(
         "All available cases have been reviewed."
     )
+
 
     st.stop()
 
@@ -771,6 +1482,7 @@ if len(
 st.sidebar.header(
     "Case selection"
 )
+
 
 case_number = (
     st.sidebar.number_input(
@@ -784,6 +1496,7 @@ case_number = (
     )
 )
 
+
 row = (
     cases_display
     .iloc[
@@ -791,11 +1504,13 @@ row = (
     ]
 )
 
+
 image_key = (
     row[
         "image_key"
     ]
 )
+
 
 patient_id = (
     row[
@@ -803,26 +1518,48 @@ patient_id = (
     ]
 )
 
+
+image_path = (
+    row[
+        "image_path"
+    ]
+)
+
+
 segmentation_path = (
     row[
         "segmentation_path"
     ]
 )
 
+
 st.sidebar.write(
     f"Case {case_number} "
     f"of {len(cases_display)}"
 )
 
+
 st.sidebar.code(
     image_key
 )
+
+
+st.sidebar.caption(
+    "Patient"
+)
+
+
+st.sidebar.code(
+    patient_id
+)
+
 
 if image_key in evaluated_keys:
 
     st.sidebar.success(
         "Already reviewed"
     )
+
 
 else:
 
@@ -832,29 +1569,24 @@ else:
 
 
 # ============================================================
-# FIND ORIGINAL DICOM
+# CHECK ORIGINAL IMAGE
 # ============================================================
 
-dicom_files = (
-    find_dicom_for_patient(
-        patient_id
-    )
-)
-
-if len(
-    dicom_files
-) == 0:
+if not os.path.isfile(
+    image_path
+):
 
     st.error(
-        f"No original DICOM found for "
-        f"{patient_id}"
+        "Original DICOM file could not be found."
     )
 
-    st.stop()
 
-image_path = (
-    dicom_files[0]
-)
+    st.code(
+        image_path
+    )
+
+
+    st.stop()
 
 
 # ============================================================
@@ -866,6 +1598,7 @@ image = (
         image_path
     )
 )
+
 
 segmentation = (
     load_segmentation(
@@ -889,14 +1622,17 @@ if (
         "different dimensions."
     )
 
+
     st.write(
         f"Image: {image.shape}"
     )
+
 
     st.write(
         f"Segmentation: "
         f"{segmentation.shape}"
     )
+
 
     st.stop()
 
@@ -909,11 +1645,19 @@ st.subheader(
     image_key
 )
 
+
+st.caption(
+    f"Dataset: {DATASET_NAME} | "
+    f"Patient: {patient_id}"
+)
+
+
 info1, info2, info3 = (
     st.columns(
         3
     )
 )
+
 
 info1.metric(
     "Image height",
@@ -922,12 +1666,14 @@ info1.metric(
     ]
 )
 
+
 info2.metric(
     "Image width",
     image.shape[
         1
     ]
 )
+
 
 classes_present = (
     np.unique(
@@ -936,12 +1682,14 @@ classes_present = (
     .tolist()
 )
 
+
 info3.metric(
     "Classes present",
     str(
         classes_present
     )
 )
+
 
 st.caption(
     "maseg classes: "
@@ -972,6 +1720,7 @@ with col1:
         "Original mammogram"
     )
 
+
     fig, ax = (
         plt.subplots(
             figsize=(
@@ -981,19 +1730,23 @@ with col1:
         )
     )
 
+
     ax.imshow(
         image,
         cmap="gray"
     )
 
+
     ax.axis(
         "off"
     )
+
 
     st.pyplot(
         fig,
         use_container_width=True
     )
+
 
     plt.close(
         fig
@@ -1010,6 +1763,7 @@ with col2:
         "maseg segmentation"
     )
 
+
     fig, ax = plt.subplots(
         figsize=(
             7,
@@ -1017,11 +1771,13 @@ with col2:
         )
     )
 
+
     # Original mammogram
     ax.imshow(
         image,
         cmap="gray"
     )
+
 
     # --------------------------------------------------------
     # Breast mask
@@ -1030,6 +1786,7 @@ with col2:
     breast_mask = (
         segmentation == 1
     )
+
 
     if np.any(
         breast_mask
@@ -1044,6 +1801,7 @@ with col2:
             cmap="Reds"
         )
 
+
         ax.contour(
             breast_mask,
             levels=[
@@ -1053,6 +1811,7 @@ with col2:
             colors="red"
         )
 
+
     # --------------------------------------------------------
     # Pectoral muscle
     # --------------------------------------------------------
@@ -1060,6 +1819,7 @@ with col2:
     pectoral_mask = (
         segmentation == 2
     )
+
 
     if np.any(
         pectoral_mask
@@ -1074,6 +1834,7 @@ with col2:
             cmap="Blues"
         )
 
+
         ax.contour(
             pectoral_mask,
             levels=[
@@ -1082,6 +1843,7 @@ with col2:
             linewidths=2,
             colors="cyan"
         )
+
 
     # --------------------------------------------------------
     # Legend
@@ -1104,19 +1866,23 @@ with col2:
         )
     ]
 
+
     ax.legend(
         handles=legend_elements,
         loc="lower left"
     )
 
+
     ax.axis(
         "off"
     )
+
 
     st.pyplot(
         fig,
         use_container_width=True
     )
+
 
     plt.close(
         fig
@@ -1140,20 +1906,24 @@ with st.expander(
         )
     )
 
+
     ax.imshow(
         segmentation,
         vmin=0,
         vmax=2
     )
 
+
     ax.axis(
         "off"
     )
+
 
     st.pyplot(
         fig,
         use_container_width=True
     )
+
 
     plt.close(
         fig
@@ -1170,6 +1940,7 @@ with st.expander(
         0
     )
 
+
     fig, ax = (
         plt.subplots(
             figsize=(
@@ -1179,19 +1950,23 @@ with st.expander(
         )
     )
 
+
     ax.imshow(
         foreground,
         cmap="gray"
     )
 
+
     ax.axis(
         "off"
     )
+
 
     st.pyplot(
         fig,
         use_container_width=True
     )
+
 
     plt.close(
         fig
@@ -1203,6 +1978,7 @@ with st.expander(
 # ============================================================
 
 existing = None
+
 
 if (
     len(
@@ -1221,6 +1997,25 @@ if (
         image_key
     ]
 
+
+    # --------------------------------------------------------
+    # Dataset-aware matching
+    # --------------------------------------------------------
+
+    if (
+        "dataset"
+        in previous.columns
+    ):
+
+        previous = previous[
+            previous[
+                "dataset"
+            ]
+            ==
+            DATASET_NAME
+        ]
+
+
     if len(
         previous
     ) > 0:
@@ -1233,6 +2028,10 @@ if (
         )
 
 
+# ============================================================
+# PREVIOUS VALUE HELPER
+# ============================================================
+
 def previous_value(
     column,
     default
@@ -1242,9 +2041,11 @@ def previous_value(
 
         return default
 
+
     if column not in existing.index:
 
         return default
+
 
     value = (
         existing[
@@ -1252,11 +2053,13 @@ def previous_value(
         ]
     )
 
+
     if pd.isna(
         value
     ):
 
         return default
+
 
     return value
 
@@ -1269,10 +2072,11 @@ st.header(
     "Qualitative visual assessment"
 )
 
+
 st.info(
     "This is a qualitative visual assessment. "
-    "No breast/background ground-truth mask is "
-    "available for this dataset."
+    "No whole-breast/background ground-truth mask is "
+    "being used for this review."
 )
 
 
@@ -1287,12 +2091,14 @@ quality_options = [
     "Unable to assess"
 ]
 
+
 previous_quality = (
     previous_value(
         "overall_quality",
         "Good"
     )
 )
+
 
 if previous_quality in quality_options:
 
@@ -1303,9 +2109,11 @@ if previous_quality in quality_options:
         )
     )
 
+
 else:
 
     quality_index = 0
+
 
 overall_quality = (
     st.radio(
@@ -1329,6 +2137,7 @@ st.subheader(
     "Segmentation characteristics"
 )
 
+
 c1, c2, c3 = (
     st.columns(
         3
@@ -1347,10 +2156,12 @@ boundary_options = [
     "Unable to assess"
 ]
 
+
 previous_boundary = previous_value(
     "breast_boundary",
     "Correct"
 )
+
 
 boundary_index = (
     boundary_options.index(
@@ -1360,6 +2171,7 @@ boundary_index = (
     in boundary_options
     else 0
 )
+
 
 with c1:
 
@@ -1387,10 +2199,12 @@ leakage_options = [
     "Unable to assess"
 ]
 
+
 previous_leakage = previous_value(
     "background_leakage",
     "None"
 )
+
 
 leakage_index = (
     leakage_options.index(
@@ -1400,6 +2214,7 @@ leakage_index = (
     in leakage_options
     else 0
 )
+
 
 with c1:
 
@@ -1427,10 +2242,12 @@ missing_options = [
     "Unable to assess"
 ]
 
+
 previous_missing = previous_value(
     "missing_breast_tissue",
     "None"
 )
+
 
 missing_index = (
     missing_options.index(
@@ -1440,6 +2257,7 @@ missing_index = (
     in missing_options
     else 0
 )
+
 
 with c2:
 
@@ -1467,10 +2285,12 @@ pectoral_options = [
     "Unable to assess"
 ]
 
+
 previous_pectoral = previous_value(
     "pectoral_region",
     "Correct"
 )
+
 
 pectoral_index = (
     pectoral_options.index(
@@ -1480,6 +2300,7 @@ pectoral_index = (
     in pectoral_options
     else 0
 )
+
 
 with c2:
 
@@ -1507,10 +2328,12 @@ artefact_options = [
     "Unable to assess"
 ]
 
+
 previous_artefacts = previous_value(
     "artefacts",
     "None"
 )
+
 
 artefact_index = (
     artefact_options.index(
@@ -1520,6 +2343,7 @@ artefact_index = (
     in artefact_options
     else 0
 )
+
 
 with c3:
 
@@ -1546,10 +2370,12 @@ acceptable_options = [
     "Uncertain"
 ]
 
+
 previous_acceptable = previous_value(
     "acceptable_segmentation",
     "Yes"
 )
+
 
 acceptable_index = (
     acceptable_options.index(
@@ -1559,6 +2385,7 @@ acceptable_index = (
     in acceptable_options
     else 0
 )
+
 
 with c3:
 
@@ -1585,6 +2412,7 @@ previous_comments = previous_value(
     ""
 )
 
+
 comments = st.text_area(
     "Reviewer comments",
     value=str(
@@ -1603,6 +2431,37 @@ comments = st.text_area(
 
 
 # ============================================================
+# DETERMINE VIEW
+# ============================================================
+
+if DATASET_NAME == "CBIS_DDSM":
+
+    if image_key.endswith(
+        "_MLO"
+    ):
+
+        view = "MLO"
+
+
+    elif image_key.endswith(
+        "_CC"
+    ):
+
+        view = "CC"
+
+
+    else:
+
+        view = ""
+
+
+else:
+
+    # CMMD loader does not use view information
+    view = ""
+
+
+# ============================================================
 # SAVE QUALITATIVE REVIEW
 # ============================================================
 
@@ -1611,25 +2470,12 @@ if st.button(
     type="primary"
 ):
 
-    if image_key.endswith(
-        "_MLO"
-    ):
-
-        view = "MLO"
-
-    elif image_key.endswith(
-        "_CC"
-    ):
-
-        view = "CC"
-
-    else:
-
-        view = ""
-
     new_row = pd.DataFrame(
         [
             {
+                "dataset":
+                    DATASET_NAME,
+
                 "image_key":
                     image_key,
 
@@ -1675,6 +2521,7 @@ if st.button(
         ]
     )
 
+
     if os.path.exists(
         EVALUATION_CSV
     ):
@@ -1683,19 +2530,54 @@ if st.button(
             EVALUATION_CSV
         )
 
+
         if (
             "image_key"
             in old.columns
         ):
 
-            # Replace previous review of same case
-            old = old[
-                old[
-                    "image_key"
+            # -----------------------------------------------
+            # Replace only the review for this same image
+            # and dataset.
+            # -----------------------------------------------
+
+            if (
+                "dataset"
+                in old.columns
+            ):
+
+                old = old[
+                    ~(
+                        (
+                            old[
+                                "image_key"
+                            ]
+                            ==
+                            image_key
+                        )
+                        &
+                        (
+                            old[
+                                "dataset"
+                            ]
+                            ==
+                            DATASET_NAME
+                        )
+                    )
                 ]
-                !=
-                image_key
-            ]
+
+
+            else:
+
+                # Legacy CSV without dataset column
+                old = old[
+                    old[
+                        "image_key"
+                    ]
+                    !=
+                    image_key
+                ]
+
 
         evaluation = pd.concat(
             [
@@ -1705,24 +2587,31 @@ if st.button(
             ignore_index=True
         )
 
+
     else:
 
         evaluation = (
             new_row
         )
 
+
     evaluation.to_csv(
         EVALUATION_CSV,
         index=False
     )
 
+
     st.success(
-        f"Evaluation saved for {image_key}"
+        f"Evaluation saved for "
+        f"{image_key}"
     )
 
+
     st.caption(
-        f"Saved to: {EVALUATION_CSV}"
+        f"Saved to: "
+        f"{EVALUATION_CSV}"
     )
+
 
     st.rerun()
 
@@ -1745,15 +2634,45 @@ with st.expander(
             )
         )
 
+
+        # ----------------------------------------------------
+        # Display current dataset only where possible
+        # ----------------------------------------------------
+
+        if (
+            "dataset"
+            in current_evaluations.columns
+        ):
+
+            dataset_evaluations = (
+                current_evaluations[
+                    current_evaluations[
+                        "dataset"
+                    ]
+                    ==
+                    DATASET_NAME
+                ]
+            )
+
+        else:
+
+            dataset_evaluations = (
+                current_evaluations
+            )
+
+
         st.dataframe(
-            current_evaluations,
+            dataset_evaluations,
             use_container_width=True
         )
 
+
         st.write(
-            f"{len(current_evaluations)} "
-            "cases reviewed."
+            f"{len(dataset_evaluations)} "
+            "cases reviewed for "
+            f"{DATASET_NAME}."
         )
+
 
     else:
 

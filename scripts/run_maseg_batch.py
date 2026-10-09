@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+
 """
 Created on Tue Oct  6 12:51:58 2026
 
@@ -7,26 +8,46 @@ Created on Tue Oct  6 12:51:58 2026
 """
 
 """
-Batch maseg evaluation on CBIS-DDSM mammograms.
+Batch maseg evaluation on mammography datasets.
 
 This module is designed to be called from main.py.
 
-The configuration is passed in as a dictionary loaded from config.json.
+Supported datasets
+------------------
+- CBIS_DDSM
+- CMMD
+
+The dataset is selected through DATASET_NAME in config.json.
+
+Each dataset loader returns a common table containing:
+
+    image_key
+    PatientID
+    image_path
+
+This allows the same maseg inference pipeline to be used
+for different datasets.
 
 Expected config keys
 --------------------
 Required:
-    METADATA_CSV
+    DATASET_NAME
     DATA_ROOT
     MASEG_ROOT
     WEIGHTS_PATH
     OUTPUT_DIR
 
+Dataset-specific:
+    METADATA_CSV
+        Required for CBIS_DDSM.
+
 Optional:
     MLO_ONLY   -> default True
+                  Used for CBIS_DDSM only.
     MAX_DIM    -> default 2048
     LIMIT      -> default None
 """
+
 
 # ============================================================
 # IMPORTS
@@ -46,73 +67,8 @@ import torch
 
 
 # ============================================================
-# HELPER FUNCTIONS
+# GENERIC DICOM FUNCTIONS
 # ============================================================
-
-def get_image_key(patient_id):
-
-    """
-    Extract a mammogram key such as:
-
-        P_00038_LEFT_MLO
-
-    from strings such as:
-
-        P_00038_LEFT_MLO.dcm
-
-    or:
-
-        Calc-Test_P_00038_LEFT_MLO_1
-    """
-
-    name = str(patient_id)
-
-    match = re.search(
-        r"(P_\d+_(?:LEFT|RIGHT)_(?:CC|MLO))",
-        name
-    )
-
-    if match:
-        return match.group(1)
-
-    return None
-
-
-def find_dicom_for_patient(
-    patient_id,
-    data_root
-):
-
-    """
-    Find DICOM files underneath the directory
-    corresponding to the supplied PatientID.
-    """
-
-    patient_dir = os.path.join(
-        data_root,
-        str(patient_id)
-    )
-
-    if not os.path.exists(
-        patient_dir
-    ):
-
-        return []
-
-
-    files = glob.glob(
-        os.path.join(
-            patient_dir,
-            "**",
-            "*.dcm"
-        ),
-        recursive=True
-    )
-
-    return sorted(
-        files
-    )
-
 
 def load_dicom(path):
 
@@ -124,6 +80,7 @@ def load_dicom(path):
         path
     )
 
+
     image = (
         ds.pixel_array
         .astype(
@@ -131,8 +88,13 @@ def load_dicom(path):
         )
     )
 
+
     return ds, image
 
+
+# ============================================================
+# PREPROCESS MAMMOGRAM
+# ============================================================
 
 def preprocess_mammogram(
     ds,
@@ -143,6 +105,8 @@ def preprocess_mammogram(
     Basic preprocessing used before passing the
     mammogram to maseg.
 
+    Steps
+    -----
     - convert to float32
     - invert MONOCHROME1 images
     - normalize to [0, 1]
@@ -198,6 +162,10 @@ def preprocess_mammogram(
 
     return image
 
+
+# ============================================================
+# RESIZE IMAGE
+# ============================================================
 
 def resize_for_maseg(
     image,
@@ -256,6 +224,10 @@ def resize_for_maseg(
     return resized, scale
 
 
+# ============================================================
+# RUN MASEG
+# ============================================================
+
 def run_maseg(
     model,
     image,
@@ -266,6 +238,7 @@ def run_maseg(
     Run maseg inference.
 
     Large mammograms are downsampled before inference.
+
     The resulting categorical segmentation is resized
     back to the original image size using nearest-neighbour
     interpolation.
@@ -328,48 +301,113 @@ def run_maseg(
 
 
 # ============================================================
-# MAIN BATCH FUNCTION
+# CBIS-DDSM
 # ============================================================
 
-def run_batch(config):
+def get_cbis_image_key(patient_id):
 
     """
-    Run batch maseg inference using settings supplied
-    through the config dictionary.
+    Extract a mammogram key such as:
 
-    Parameters
-    ----------
-    config : dict
-        Configuration loaded by main.py from config.json.
+        P_00038_LEFT_MLO
 
-    Returns
-    -------
-    pandas.DataFrame
-        Processing results/log.
+    from strings such as:
+
+        P_00038_LEFT_MLO.dcm
+
+    or:
+
+        Calc-Test_P_00038_LEFT_MLO_1
     """
 
-    # ========================================================
-    # CONFIGURATION
-    # ========================================================
+    name = str(
+        patient_id
+    )
+
+
+    match = re.search(
+        r"(P_\d+_(?:LEFT|RIGHT)_(?:CC|MLO))",
+        name
+    )
+
+
+    if match:
+
+        return match.group(1)
+
+
+    return None
+
+
+# ============================================================
+
+def find_cbis_dicom(
+    patient_id,
+    data_root
+):
+
+    """
+    Find DICOM files underneath the directory
+    corresponding to the supplied PatientID.
+
+    The first matching DICOM is returned, preserving
+    the behaviour of the original CBIS-DDSM pipeline.
+    """
+
+    patient_dir = os.path.join(
+        data_root,
+        str(patient_id)
+    )
+
+
+    if not os.path.exists(
+        patient_dir
+    ):
+
+        return None
+
+
+    files = sorted(
+        glob.glob(
+            os.path.join(
+                patient_dir,
+                "**",
+                "*.dcm"
+            ),
+            recursive=True
+        )
+    )
+
+
+    if len(files) == 0:
+
+        return None
+
+
+    return files[0]
+
+
+# ============================================================
+
+def load_cbis_ddsm(config):
+
+    """
+    Load eligible CBIS-DDSM mammograms.
+
+    Returns a DataFrame containing:
+
+        image_key
+        PatientID
+        image_path
+    """
 
     METADATA_CSV = config[
         "METADATA_CSV"
     ]
 
+
     DATA_ROOT = config[
         "DATA_ROOT"
-    ]
-
-    MASEG_ROOT = config[
-        "MASEG_ROOT"
-    ]
-
-    WEIGHTS_PATH = config[
-        "WEIGHTS_PATH"
-    ]
-
-    OUTPUT_DIR = config[
-        "OUTPUT_DIR"
     ]
 
 
@@ -377,118 +415,6 @@ def run_batch(config):
         "MLO_ONLY",
         True
     )
-
-
-    MAX_DIM = config.get(
-        "MAX_DIM",
-        2048
-    )
-
-
-    LIMIT = config.get(
-        "LIMIT",
-        None
-    )
-
-
-    PROCESSING_LOG = os.path.join(
-        OUTPUT_DIR,
-        "processing_log.csv"
-    )
-
-
-    # ========================================================
-    # OUTPUT DIRECTORY
-    # ========================================================
-
-    os.makedirs(
-        OUTPUT_DIR,
-        exist_ok=True
-    )
-
-
-    # ========================================================
-    # IMPORT MASEG
-    # ========================================================
-
-    if MASEG_ROOT not in sys.path:
-
-        sys.path.insert(
-            0,
-            MASEG_ROOT
-        )
-
-
-    try:
-
-        from maseg.run_model import RunModel
-
-    except ImportError as e:
-
-        raise ImportError(
-            "Could not import maseg.\n"
-            f"MASEG_ROOT is currently:\n{MASEG_ROOT}\n\n"
-            "Check that this points to the cloned maseg "
-            "repository."
-        ) from e
-
-
-    # ========================================================
-    # SHOW SETTINGS
-    # ========================================================
-
-    print(
-        "\nBatch configuration:"
-    )
-
-    print(
-        "Metadata CSV:",
-        METADATA_CSV
-    )
-
-    print(
-        "Data root:",
-        DATA_ROOT
-    )
-
-    print(
-        "maseg root:",
-        MASEG_ROOT
-    )
-
-    print(
-        "Weights:",
-        WEIGHTS_PATH
-    )
-
-    print(
-        "Output directory:",
-        OUTPUT_DIR
-    )
-
-    print(
-        "MLO only:",
-        MLO_ONLY
-    )
-
-    print(
-        "Maximum image dimension:",
-        MAX_DIM
-    )
-
-
-    if LIMIT is None:
-
-        print(
-            "Image limit: ALL"
-        )
-
-    else:
-
-        print(
-            "Image limit:",
-            LIMIT
-        )
 
 
     # ========================================================
@@ -532,7 +458,7 @@ def run_batch(config):
             "PatientID"
         ]
         .apply(
-            get_image_key
+            get_cbis_image_key
         )
     )
 
@@ -628,7 +554,7 @@ def run_batch(config):
     # ONE ROW PER MAMMOGRAM
     # ========================================================
 
-    unique_images = (
+    images = (
         full_images[
             [
                 "image_key",
@@ -651,6 +577,534 @@ def run_batch(config):
     )
 
 
+    # ========================================================
+    # FIND DICOM PATH
+    # ========================================================
+
+    images[
+        "image_path"
+    ] = images[
+        "PatientID"
+    ].apply(
+        lambda patient_id:
+        find_cbis_dicom(
+            patient_id,
+            DATA_ROOT
+        )
+    )
+
+
+    missing_dicom = (
+        images[
+            "image_path"
+        ]
+        .isna()
+        .sum()
+    )
+
+
+    if missing_dicom > 0:
+
+        print(
+            "\nCBIS-DDSM entries with no DICOM found:",
+            missing_dicom
+        )
+
+
+    images = (
+        images[
+            images[
+                "image_path"
+            ].notna()
+        ]
+        .reset_index(
+            drop=True
+        )
+    )
+
+
+    print(
+        "\nEligible CBIS-DDSM mammograms:",
+        len(images)
+    )
+
+
+    return images
+
+
+# ============================================================
+# CMMD
+# ============================================================
+
+def load_cmmd(config):
+
+    """
+    Load all DICOM images from the CMMD dataset.
+
+    Example structure
+    -----------------
+
+    DATA_ROOT/
+        D1-0001/
+            2010-07-18-79377/
+                1-70244/
+                    image1.dcm
+                    image2.dcm
+
+        D1-0002/
+            ...
+
+    Every DICOM is treated as a separate image.
+
+    No filtering by MLO, CC, laterality or other
+    mammography-view metadata is performed.
+
+    Returns a DataFrame containing:
+
+        image_key
+        PatientID
+        image_path
+    """
+
+    DATA_ROOT = config[
+        "DATA_ROOT"
+    ]
+
+
+    records = []
+
+
+    # ========================================================
+    # FIND PATIENT DIRECTORIES
+    # ========================================================
+
+    patient_dirs = sorted(
+        [
+            path
+            for path in glob.glob(
+                os.path.join(
+                    DATA_ROOT,
+                    "*"
+                )
+            )
+            if os.path.isdir(
+                path
+            )
+        ]
+    )
+
+
+    print(
+        "\nCMMD patient folders found:",
+        len(patient_dirs)
+    )
+
+
+    # ========================================================
+    # FIND ALL DICOMS
+    # ========================================================
+
+    for patient_dir in patient_dirs:
+
+        patient_id = os.path.basename(
+            patient_dir
+        )
+
+
+        dicom_files = sorted(
+            glob.glob(
+                os.path.join(
+                    patient_dir,
+                    "**",
+                    "*.dcm"
+                ),
+                recursive=True
+            )
+        )
+
+
+        if len(
+            dicom_files
+        ) == 0:
+
+            print(
+                "No DICOM files found for:",
+                patient_id
+            )
+
+            continue
+
+
+        print(
+            patient_id,
+            "- DICOM images:",
+            len(dicom_files)
+        )
+
+
+        # ----------------------------------------------------
+        # Every DICOM is a separate image
+        # ----------------------------------------------------
+
+        for image_index, image_path in enumerate(
+            dicom_files,
+            start=1
+        ):
+
+            image_key = (
+                f"{patient_id}_"
+                f"{image_index:02d}"
+            )
+
+
+            records.append(
+                {
+                    "image_key":
+                        image_key,
+
+                    "PatientID":
+                        patient_id,
+
+                    "image_path":
+                        image_path
+                }
+            )
+
+
+    # ========================================================
+    # CREATE TABLE
+    # ========================================================
+
+    images = pd.DataFrame(
+        records,
+        columns=[
+            "image_key",
+            "PatientID",
+            "image_path"
+        ]
+    )
+
+
+    print(
+        "\nTotal CMMD DICOM images:",
+        len(images)
+    )
+
+
+    if len(
+        images
+    ) > 0:
+
+        print(
+            "Total CMMD patients:",
+            images[
+                "PatientID"
+            ].nunique()
+        )
+
+    else:
+
+        print(
+            "Total CMMD patients: 0"
+        )
+
+
+    return images
+
+
+# ============================================================
+# DATASET DISPATCHER
+# ============================================================
+
+def load_dataset(config):
+
+    """
+    Load the dataset specified by DATASET_NAME.
+
+    All loaders return a DataFrame with:
+
+        image_key
+        PatientID
+        image_path
+    """
+
+    dataset_name = str(
+        config[
+            "DATASET_NAME"
+        ]
+    ).upper()
+
+
+    print(
+        "\n========================================"
+    )
+
+    print(
+        "Loading dataset:",
+        dataset_name
+    )
+
+    print(
+        "========================================"
+    )
+
+
+    if dataset_name == "CBIS_DDSM":
+
+        return load_cbis_ddsm(
+            config
+        )
+
+
+    elif dataset_name == "CMMD":
+
+        return load_cmmd(
+            config
+        )
+
+
+    else:
+
+        raise ValueError(
+            f"Unsupported dataset: "
+            f"{dataset_name}"
+        )
+
+
+# ============================================================
+# MAIN BATCH FUNCTION
+# ============================================================
+
+def run_batch(config):
+
+    """
+    Run batch maseg inference using settings supplied
+    through the config dictionary.
+
+    Parameters
+    ----------
+    config : dict
+        Configuration loaded by main.py from config.json.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Processing results/log.
+    """
+
+
+    # ========================================================
+    # CONFIGURATION
+    # ========================================================
+
+    DATASET_NAME = str(
+        config[
+            "DATASET_NAME"
+        ]
+    ).upper()
+
+
+    DATA_ROOT = config[
+        "DATA_ROOT"
+    ]
+
+
+    MASEG_ROOT = config[
+        "MASEG_ROOT"
+    ]
+
+
+    WEIGHTS_PATH = config[
+        "WEIGHTS_PATH"
+    ]
+
+
+    OUTPUT_DIR = config[
+        "OUTPUT_DIR"
+    ]
+
+
+    MLO_ONLY = config.get(
+        "MLO_ONLY",
+        True
+    )
+
+
+    MAX_DIM = config.get(
+        "MAX_DIM",
+        2048
+    )
+
+
+    LIMIT = config.get(
+        "LIMIT",
+        None
+    )
+
+
+    PROCESSING_LOG = os.path.join(
+        OUTPUT_DIR,
+        "processing_log.csv"
+    )
+
+
+    # ========================================================
+    # OUTPUT DIRECTORY
+    # ========================================================
+
+    os.makedirs(
+        OUTPUT_DIR,
+        exist_ok=True
+    )
+
+
+    # ========================================================
+    # IMPORT MASEG
+    # ========================================================
+
+    if MASEG_ROOT not in sys.path:
+
+        sys.path.insert(
+            0,
+            MASEG_ROOT
+        )
+
+
+    try:
+
+        from maseg.run_model import RunModel
+
+
+    except ImportError as e:
+
+        raise ImportError(
+            "Could not import maseg.\n"
+            f"MASEG_ROOT is currently:\n"
+            f"{MASEG_ROOT}\n\n"
+            "Check that this points to the cloned maseg "
+            "repository."
+        ) from e
+
+
+    # ========================================================
+    # SHOW SETTINGS
+    # ========================================================
+
+    print(
+        "\nBatch configuration:"
+    )
+
+
+    print(
+        "Dataset:",
+        DATASET_NAME
+    )
+
+
+    if (
+        DATASET_NAME == "CBIS_DDSM"
+        and
+        "METADATA_CSV" in config
+    ):
+
+        print(
+            "Metadata CSV:",
+            config[
+                "METADATA_CSV"
+            ]
+        )
+
+
+    print(
+        "Data root:",
+        DATA_ROOT
+    )
+
+
+    print(
+        "maseg root:",
+        MASEG_ROOT
+    )
+
+
+    print(
+        "Weights:",
+        WEIGHTS_PATH
+    )
+
+
+    print(
+        "Output directory:",
+        OUTPUT_DIR
+    )
+
+
+    if DATASET_NAME == "CBIS_DDSM":
+
+        print(
+            "MLO only:",
+            MLO_ONLY
+        )
+
+
+    print(
+        "Maximum image dimension:",
+        MAX_DIM
+    )
+
+
+    if LIMIT is None:
+
+        print(
+            "Image limit: ALL"
+        )
+
+    else:
+
+        print(
+            "Image limit:",
+            LIMIT
+        )
+
+
+    # ========================================================
+    # LOAD DATASET
+    # ========================================================
+
+    unique_images = load_dataset(
+        config
+    )
+
+
+    # ========================================================
+    # VALIDATE LOADER OUTPUT
+    # ========================================================
+
+    required_columns = [
+        "image_key",
+        "PatientID",
+        "image_path"
+    ]
+
+
+    missing_columns = [
+        column
+        for column in required_columns
+        if column not in unique_images.columns
+    ]
+
+
+    if missing_columns:
+
+        raise ValueError(
+            "Dataset loader did not return the required "
+            "columns: "
+            + ", ".join(
+                missing_columns
+            )
+        )
+
+
     total_available = len(
         unique_images
     )
@@ -668,17 +1122,20 @@ def run_batch(config):
                 LIMIT
             )
             .copy()
+            .reset_index(
+                drop=True
+            )
         )
 
 
     print(
-        "\nTotal eligible mammograms:",
+        "\nTotal eligible images:",
         total_available
     )
 
 
     print(
-        "Mammograms selected for this run:",
+        "Images selected for this run:",
         len(
             unique_images
         )
@@ -694,7 +1151,7 @@ def run_batch(config):
     ) == 0:
 
         print(
-            "\nNo eligible mammograms found."
+            "\nNo eligible images found."
         )
 
         return pd.DataFrame()
@@ -748,8 +1205,14 @@ def run_batch(config):
             "image_key"
         ]
 
+
         patient_id = row[
             "PatientID"
+        ]
+
+
+        image_path = row[
+            "image_path"
         ]
 
 
@@ -767,6 +1230,18 @@ def run_batch(config):
 
         print(
             "=" * 70
+        )
+
+
+        print(
+            "Patient:",
+            patient_id
+        )
+
+
+        print(
+            "DICOM:",
+            image_path
         )
 
 
@@ -791,11 +1266,17 @@ def run_batch(config):
 
             results.append(
                 {
+                    "dataset":
+                        DATASET_NAME,
+
                     "image_key":
                         image_key,
 
                     "patient_id":
                         patient_id,
+
+                    "image_path":
+                        image_path,
 
                     "status":
                         "already_processed",
@@ -817,41 +1298,26 @@ def run_batch(config):
         # ----------------------------------------------------
 
         image_raw = None
+
         image = None
+
         segmentation = None
 
 
         try:
 
             # =================================================
-            # FIND DICOM
+            # CHECK DICOM EXISTS
             # =================================================
 
-            image_files = find_dicom_for_patient(
-                patient_id,
-                DATA_ROOT
-            )
-
-
-            if len(
-                image_files
-            ) == 0:
+            if not os.path.isfile(
+                image_path
+            ):
 
                 raise FileNotFoundError(
-                    f"No DICOM found for "
-                    f"{patient_id}"
+                    f"DICOM file not found:\n"
+                    f"{image_path}"
                 )
-
-
-            image_path = (
-                image_files[0]
-            )
-
-
-            print(
-                "DICOM:",
-                image_path
-            )
 
 
             # =================================================
@@ -914,8 +1380,15 @@ def run_batch(config):
             )
 
 
+            # =================================================
+            # SAVE RESULT
+            # =================================================
+
             results.append(
                 {
+                    "dataset":
+                        DATASET_NAME,
+
                     "image_key":
                         image_key,
 
@@ -960,11 +1433,17 @@ def run_batch(config):
 
             results.append(
                 {
+                    "dataset":
+                        DATASET_NAME,
+
                     "image_key":
                         image_key,
 
                     "patient_id":
                         patient_id,
+
+                    "image_path":
+                        image_path,
 
                     "status":
                         "cuda_oom",
@@ -992,11 +1471,17 @@ def run_batch(config):
 
             results.append(
                 {
+                    "dataset":
+                        DATASET_NAME,
+
                     "image_key":
                         image_key,
 
                     "patient_id":
                         patient_id,
+
+                    "image_path":
+                        image_path,
 
                     "status":
                         "failed",

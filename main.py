@@ -19,6 +19,14 @@ Workflow
 4. Launch the Streamlit review interface
 
 All main settings are controlled from config.json.
+
+Supported datasets
+------------------
+- CBIS_DDSM
+- CMMD
+
+Dataset-specific loading is handled downstream in
+scripts/dataset_loaders.py.
 """
 
 import os
@@ -68,11 +76,11 @@ def load_config(config_path):
 
 
     # --------------------------------------------------------
-    # Required configuration entries
+    # Required configuration entries shared by all datasets
     # --------------------------------------------------------
 
     required_keys = [
-        "METADATA_CSV",
+        "DATASET_NAME",
         "DATA_ROOT",
         "MASEG_ROOT",
         "WEIGHTS_PATH",
@@ -93,6 +101,55 @@ def load_config(config_path):
             "Missing required configuration values: "
             + ", ".join(missing)
         )
+
+
+    # --------------------------------------------------------
+    # Dataset name
+    # --------------------------------------------------------
+
+    dataset_name = str(
+        config[
+            "DATASET_NAME"
+        ]
+    ).upper()
+
+
+    supported_datasets = [
+        "CBIS_DDSM",
+        "CMMD"
+    ]
+
+
+    if dataset_name not in supported_datasets:
+
+        raise ValueError(
+            "Unsupported DATASET_NAME: "
+            f"{dataset_name}\n"
+            "Supported datasets: "
+            + ", ".join(
+                supported_datasets
+            )
+        )
+
+
+    # Store normalised dataset name
+    config[
+        "DATASET_NAME"
+    ] = dataset_name
+
+
+    # --------------------------------------------------------
+    # Dataset-specific required configuration
+    # --------------------------------------------------------
+
+    if dataset_name == "CBIS_DDSM":
+
+        if "METADATA_CSV" not in config:
+
+            raise KeyError(
+                "METADATA_CSV is required "
+                "when DATASET_NAME is CBIS_DDSM."
+            )
 
 
     # --------------------------------------------------------
@@ -195,15 +252,30 @@ def load_config(config_path):
 
 def validate_config(config):
 
-    if not os.path.isfile(
-        config["METADATA_CSV"]
-    ):
+    dataset_name = config[
+        "DATASET_NAME"
+    ]
 
-        raise FileNotFoundError(
-            "Metadata CSV not found:\n"
-            + config["METADATA_CSV"]
-        )
 
+    # --------------------------------------------------------
+    # Dataset-specific paths
+    # --------------------------------------------------------
+
+    if dataset_name == "CBIS_DDSM":
+
+        if not os.path.isfile(
+            config["METADATA_CSV"]
+        ):
+
+            raise FileNotFoundError(
+                "Metadata CSV not found:\n"
+                + config["METADATA_CSV"]
+            )
+
+
+    # --------------------------------------------------------
+    # Common paths
+    # --------------------------------------------------------
 
     if not os.path.isdir(
         config["DATA_ROOT"]
@@ -271,9 +343,18 @@ def print_configuration(config):
 
 
     print(
-        "Metadata CSV:",
-        config["METADATA_CSV"]
+        "Dataset:",
+        config["DATASET_NAME"]
     )
+
+
+    if "METADATA_CSV" in config:
+
+        print(
+            "Metadata CSV:",
+            config["METADATA_CSV"]
+        )
+
 
     print(
         "Data root:",
@@ -462,6 +543,15 @@ def main():
             "Running maseg batch processing"
         )
 
+
+        print(
+            "Dataset:",
+            config[
+                "DATASET_NAME"
+            ]
+        )
+
+
         if config["LIMIT"] is None:
 
             print(
@@ -474,6 +564,7 @@ def main():
                 "Images selected:",
                 config["LIMIT"]
             )
+
 
         print(
             "========================================\n"

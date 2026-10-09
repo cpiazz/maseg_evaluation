@@ -1,9 +1,11 @@
 {
+  "DATASET_NAME": "CBIS_DDSM",
   "METADATA_CSV": "/path/to/CBIS_DDSM/metadata/metadata.csv",
   "DATA_ROOT": "/path/to/CBIS_DDSM/cbis_ddsm",
   "MASEG_ROOT": "/path/to/maseg",
   "WEIGHTS_PATH": "/path/to/maseg/segmentation_weights.ckpt",
   "OUTPUT_DIR": "/path/to/maseg_outputs",
+  
   
   "EVALUATION_OUTPUT_DIR": "/shared/maseg_evaluation/evaluations",
   "EVALUATION_LABEL": "review_1",
